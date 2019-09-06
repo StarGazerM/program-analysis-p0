@@ -63,3 +63,9 @@
 (interp '((lambda (x) x) "Hello, World!") (hash))
 
 (interp '(((lambda (x) (x x)) (lambda (x) x)) 1) (hash))
+
+(define (test e)
+  (match e
+    [`([,x ,y] ...) x]))
+(test '([1 2] [3 4]))
+

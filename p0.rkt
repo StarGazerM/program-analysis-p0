@@ -47,6 +47,8 @@
                    (cons 'string-append string-append)
                    (cons 'string-length string-length)
                    (cons 'length length)
+                   (cons 'or (λ (a b) (or a b)))
+                   (cons 'zero? zero?)
                    (cons 'list? list?))))
 
 ;; Interpreter
@@ -55,22 +57,24 @@
 (define (interp e env)
   (match e
     [(? lit? l) l]
-    [(? symbol? var) 'undefined]
-    [`(lambda (,var) ,body)
-     'undefined]
+    [(? symbol? var) (hash-ref env var)]
+    [`(lambda (,formal-var) ,body)
+     (lambda (runtime-var) (interp body (hash-set env formal-var runtime-var)))]
     ;; Builtins!
-    ;; [`(,(? builtin? op) ,(? expr? builtin-args) ...) 
-    ;;  ;; Evaluate each argument and then apply the builtin denotation
-    ;;  ;; of the function.
-    ;;  (let ([evaluated-args (map (lambda (arg) (interp arg env)) builtin-args)])
-    ;;    ;; Take care to undersand this one!
-    ;;    (apply (hash-ref builtins op) evaluated-args))]
+    [`(,(? builtin? op) ,(? expr? builtin-args) ...) 
+      ;; Evaluate each argument and then apply the builtin denotation
+      ;; of the function.
+      (let ([evaluated-args (map (lambda (arg) (interp arg env)) builtin-args)])
+        ;; Take care to undersand this one!
+        (apply (hash-ref builtins op) evaluated-args))]
     [`(,(? expr? e0) ,(? expr? e1)) 
-     'undefined]
+     ((interp e0 env) (interp e1 env))]
     [`(if ,(? expr? guard)
           ,(? expr? etrue)
           ,(? expr? efalse)) 
-     'undefined]
+     (if (interp guard env)
+        (interp etrue env)
+        (interp efalse env))]
     [`(let* ([,(? symbol?) ,(? expr?)] ...)
         ,(? expr? body))
      'undefined]
@@ -78,12 +82,12 @@
      'undefined]))
 
 ;; Examples for Attempt 1
-(interp '((lambda (x) x) "Hello, World!") (hash))
-(interp '(((lambda (x) (x x)) (lambda (x) x)) 1) (hash))
-(interp '((lambda (x) (if (= x 0) 1
-                          (+ ((lambda (y) (if (= y 3) 1 2)) x) x)))
-          (* 1 (if #f 1 4)))
-        (hash))
+;;(interp '((lambda (x) x) "Hello, World!") (hash))
+;;(interp '(((lambda (x) (x x)) (lambda (x) x)) 1) (hash))
+;;(interp '((lambda (x) (if (= x 0) 1
+;;                          (+ ((lambda (y) (if (= y 3) 1 2)) x) x)))
+;;          (* 1 (if #f 1 4)))
+;;        (hash))
 
 ;; Letrec examples
 (letrec ([f
@@ -101,6 +105,7 @@
 
 ;; Attempt 2 at interpreter: also adds letrec and many other things.
 (define (interp-letrec e env)
+  ;; (displayln (format "~a ; ~a" e env))
   (match e
     [(? symbol? var) (hash-ref env var)]
     [(? lit?) e]
@@ -148,7 +153,17 @@
 (define letrec-example-1
   '(letrec ([f (lambda (x) (if (= x 0) 1 (* x (f (- x 1)))))])
      (f 10)))
-(interp-letrec letrec-example-1 (hash))
+;; (interp-letrec letrec-example-1 (hash))
+
+;; sum
+(letrec ([f (lambda (x y)
+                 (if (equal?  x y) x (+ y (f x (- y 1)))))])
+     (f 1 5))
+
+;; power
+(letrec ([f (lambda (x y)
+              (if (equal? y 0) 1 (* x (f x(- y 1)))))])
+  (f 2 4))
 
 ;;
 ;;
@@ -226,7 +241,7 @@
 ;; Interpreter for HW1
 (define (interp-hw1 e env)
   ; Might want to turn this on for debugging
-  ;(displayln (format "~a ; ~a" e env))
+  ; (displayln (format "~a ; ~a" e env))
   (match e
     ;; Variable lookup
     [(? symbol? var) (hash-ref env var)]
@@ -236,16 +251,23 @@
     ;; handles single-argument lambda (throws away rest of arguments).
     [`(lambda (,vars ...) ,body)
      ;; Copy the environment mutably
-     (lambda (x) 
+     (lambda (args)
        (let ([env-copy (make-hash
                         (hash-map env
-                                  (lambda (x y) (cons x y))))])
-         (hash-set! env-copy (first vars) x)         
+                                  (lambda (x y) (cons x y))))]
+             [args-l (if (list? args) args (list args))])
+         ;;(hash-set! env-copy (first vars) x)
+         (map (λ (k v) (hash-set! env-copy k v)) vars args-l)
          (interp-hw1 body env-copy)))]
     ;; TODO: implement let* correctly
-    [`(let* ([,(? symbol?) ,(? expr?)] ...)
+    [`(let* ([,(? symbol? name) ,(? expr? bind-body)] ...)
         ,(? expr? body))
-     'undefined]
+     (let* ([env-copy (make-hash
+                      (hash-map env
+                                (lambda (x y) (cons x y))))]
+            [rset (λ (k b s) (hash-set! s k (interp-hw1 b s)))])
+       (map (λ (k b) (hash-set! env-copy k (interp-hw1 b env-copy))) name bind-body)
+       (interp-hw1 body env-copy))]
     ;; TODO: handle multi-argument letrec (still only one f)
     [`(letrec ([,(? symbol? f) (lambda (,f-args ...) ,f-body)])
         ,(? expr? body))
@@ -255,13 +277,23 @@
                                 (lambda (x y) (cons x y))))])
        ;; NOTE: this implementation is *WRONG*. It throws away the
        ;; rest of the arguments past the first...
-       (hash-set! env-copy
+        (hash-set! env-copy
                   f
                   (lambda (x) (interp-hw1
                                f-body
                                (begin
-                                 (hash-set! env-copy (first f-args) x)
+                                 ;(hash-set! env-copy (first f-args) x)
+                                 (map (λ (arg v) (hash-set! env-copy arg v)) f-args x)
                                  env-copy))))
+       ;; (map (λ (f)
+       ;;     (hash-set! env-copy
+       ;;               f
+       ;;               (λ (vals) (interp-hw1
+       ;;                          f-body
+       ;;                          (begin
+       ;;                            (map (λ (arg v) (hash-set! env-copy arg v)) f-args vals)
+       ;;                            env-copy)))))
+       ;;  fs)
        ;; Now interpret the body with this updated (mutable) env
        (interp-hw1 body env-copy))]
     ;; Builtins! (Once you get multi-argument application to work, you
@@ -279,17 +311,20 @@
     ;; below.
     [`(match ,(? expr? e) [,match-patterns ,match-bodies] ...)
      (eval-match-statements match-patterns match-bodies (interp-hw1 e env) env)]
-    ;; TODO. Application: right now this only handles single-argument
-    ;; application (throws away the rest of e-args).
-    [`(,(? expr? e0) ,(? expr? e-args) ...)
-     ((interp-hw1 e0 env) (interp-hw1 (first e-args) env))]
     ;; If
     [`(if ,(? expr? guard)
           ,(? expr? etrue)
           ,(? expr? efalse)) 
      (if (interp-hw1 guard env)
          (interp-hw1 etrue env)
-         (interp-hw1 efalse env))]))
+         (interp-hw1 efalse env))]
+    ;; TODO. Application: right now this only handles single-argument
+    ;; application (throws away the rest of e-args).
+    [`(,(? expr? e0) ,(? expr? e-args) ...)
+     ;; ((interp-hw1 e0 env) (interp-hw1 (first e-args) env))]
+     ((interp-hw1 e0 env) (map (λ (arg) (interp-hw1 arg env)) e-args))]
+    ))
+
 
 ;; TODO: extend this function.  Basic idea: translate each match
 ;; pattern as a lambda that returns *either* an updated environment
@@ -337,7 +372,17 @@
       ;; index i and ith element of the list x. If it does, return
       ;; that updated environment. You can do this easily using foldl.
       [`(list ,patterns ...)
-       (lambda (x) #t)]))
+       (lambda (xs)
+         (if (and (list? xs)
+                 (equal? (length xs) (length patterns)))
+            (foldl (λ (p x e)
+                     (if e
+                        ((compile-match-statement p e) x)
+                        #f))
+                  env
+                  patterns
+                  xs)
+            #f))]))
 
   ;; Recursively try each pattern in order until we find one that
   ;; applies. If there are no more patterns, throw an error.
@@ -371,8 +416,12 @@
     ;; TODO: Write two different examples here that use letrec with more
     ;; than one argument. These should be small (but interesting)
     ;; recursive functions. You should write them in plain Racket first.
-    (letrec-multiarg-0 #t #t)
-    (letrec-multiarg-1 #t #t)
+    (letrec-multiarg-0 (letrec ([f (lambda (x y)
+                                     (if (=  x y) x (+ y (f x (- y 1)))))])
+                           (f 1 5)) 15)
+    (letrec-multiarg-1 (letrec ([f (lambda (x y)
+                                      (if (= y 0) 1 (* x (f x (- y 1)))))])
+                          (f 2 4)) 16)
     
     ;; Match statement examples    
     (match-0 (match 5
