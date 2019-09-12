@@ -251,7 +251,7 @@
     ;; handles single-argument lambda (throws away rest of arguments).
     [`(lambda (,vars ...) ,body)
      ;; Copy the environment mutably
-     (lambda args
+     (lambda (args)
        (let ([env-copy (make-hash
                         (hash-map env
                                   (lambda (x y) (cons x y))))]
@@ -279,7 +279,7 @@
        ;; rest of the arguments past the first...
         (hash-set! env-copy
                   f
-                  (lambda x (interp-hw1
+                  (lambda (x) (interp-hw1
                                f-body
                                (begin
                                  ;(hash-set! env-copy (first f-args) x)
@@ -322,7 +322,7 @@
     ;; application (throws away the rest of e-args).
     [`(,(? expr? e0) ,(? expr? e-args) ...)
      ;; ((interp-hw1 e0 env) (interp-hw1 (first e-args) env))]
-     (apply (interp-hw1 e0 env) (map (λ (arg) (interp-hw1 arg env)) e-args))]
+     ((interp-hw1 e0 env) (map (λ (arg) (interp-hw1 arg env)) e-args))]
     ))
 
 
